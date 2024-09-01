@@ -1,54 +1,39 @@
 #include <LiquidCrystal.h>
 #include <SoftwareSerial.h>
 
-// LCD setup
 LiquidCrystal lcd(A0, A1, A2, A3, A4, A5);
-
-// Bluetooth Serial
 SoftwareSerial BTSerial(6, 7);
-
-// RFID Reader Serial
 SoftwareSerial rfid_reader(7, 1);
 
 // IR Sensors
-int IR_SENSOR1 = 2;  // front sensor for entrance
-int IR_SENSOR2 = 3;  // return sensor for exit
+int IR_SENSOR1 = 2;  // for detecting car entry
+int IR_SENSOR2 = 3;  // for detecting car exit
 
-// Motor Pins
-int MOTOR1 = 12;  // Motor for Slot 1
-int MOTOR2 = 11;  // Motor for Slot 2
-int MOTOR3 = 10;  // Motor for Slot 3
-int MOTOR4 = 9;   // Motor for Slot 4
-int MOTOR5 = 8;   // Motor for Slot 5
-int MOTOR6 = 7;   // Motor for Slot 6
+// Motor pins for X, Y, Z axis
+int MOTOR_X = 12;
+int MOTOR_Y = 11;
+int MOTOR_Z = 10;
 
-// RFID Tag IDs for each slot
-char tag_1[] = "270020F5E012";  // Slot 1
-char tag_2[] = "270020F68E7F";  // Slot 2
-char tag_3[] = "270020F4D023";  // Slot 3
-char tag_4[] = "270020F6A7B4";  // Slot 4
-char tag_5[] = "270020F9C9D8";  // Slot 5
-char tag_6[] = "270020F2B4A6";  // Slot 6
-
-char input[12];  // Variable to store the ID of the Tag being presented
-int count = 0;   // Counter variable to navigate through the input[] character array
+char tag[] = "270020F5E012";
+char tag_1[] = "270020F68E7F";
+char tag_2[] = "270020F4D023";
+char input[12]; // Variable to store the ID of the Tag being presented
+int count = 0;  // Counter variable
+boolean flag = 0, flag1 = 0, flag2 = 0, state = 0;
 
 void setup() {
   lcd.begin(16, 2);
-  rfid_reader.begin(9600); // Initialise Serial Communication with the RFID reader
-  Serial.begin(9600); // Initialise Serial Communication with the Serial Monitor
-  BTSerial.begin(9600); // Initialise Bluetooth Serial Communication
+  rfid_reader.begin(9600);
+  Serial.begin(9600);
+  BTSerial.begin(9600);
   
-  // Motor and Sensor Pins Setup
+  pinMode(13, OUTPUT);
   pinMode(IR_SENSOR1, INPUT);
   pinMode(IR_SENSOR2, INPUT);
-  pinMode(MOTOR1, OUTPUT);
-  pinMode(MOTOR2, OUTPUT);
-  pinMode(MOTOR3, OUTPUT);
-  pinMode(MOTOR4, OUTPUT);
-  pinMode(MOTOR5, OUTPUT);
-  pinMode(MOTOR6, OUTPUT);
-
+  pinMode(MOTOR_X, OUTPUT);
+  pinMode(MOTOR_Y, OUTPUT);
+  pinMode(MOTOR_Z, OUTPUT);
+  
   lcd.setCursor(0, 0);
   lcd.print("CAR PARKING");
   lcd.setCursor(0, 1);
@@ -61,45 +46,25 @@ void loop() {
   int IR1 = digitalRead(IR_SENSOR1);
   int IR2 = digitalRead(IR_SENSOR2);
 
-  if (IR1 == LOW) {
+  if (IR1 == LOW) { 
     lcd.setCursor(0, 0);
     lcd.print("Plz insert card");
-
+  
     if (rfid_reader.available()) {
-      count = 0; // Reset the counter to zero
-      while (rfid_reader.available() && count < 12) {
-        input[count] = rfid_reader.read(); // Read 1 Byte of data and store it in the input[] variable
-        count++; // increment counter
-        delay(5);
+      readRFID();
+      
+      if (flag == 1) {
+        performParking(1); // Slot 1
+      } else if (flag1 == 1) {
+        performParking(2); // Slot 2
+      } else if (flag2 == 1) {
+        performParking(3); // Slot 3
+      } else {
+        lcd.setCursor(0, 0);
+        lcd.print("Wrong Tag");
+        Serial.println("Wrong Tag");
       }
-
-      if (count == 12) {
-        count = 0; // reset counter variable to 0
-
-        if (matchTag(input, tag_1)) {
-          activateSlot(1);
-        } else if (matchTag(input, tag_2)) {
-          activateSlot(2);
-        } else if (matchTag(input, tag_3)) {
-          activateSlot(3);
-        } else if (matchTag(input, tag_4)) {
-          activateSlot(4);
-        } else if (matchTag(input, tag_5)) {
-          activateSlot(5);
-        } else if (matchTag(input, tag_6)) {
-          activateSlot(6);
-        } else {
-          lcd.setCursor(0, 0);
-          lcd.print("Wrong Tag");
-          Serial.println("Wrong Tag");
-        }
-
-        // Clear input buffer
-        for (count = 0; count < 12; count++) {
-          input[count] = 'F';
-        }
-        count = 0; // Reset counter variable
-      }
+      clearInput();
     }
   }
 
@@ -109,61 +74,90 @@ void loop() {
     lcd.print("VIST AGAIN");
     lcd.setCursor(0, 1);
     lcd.print("THANKS");
-
-    // You can also add motor control logic for exiting if needed
-    delay(5000); // Hold for 5 seconds before clearing the message
+    runMotor(MOTOR_Z, 5000); // Return to start position
     lcd.clear();
   }
 }
 
-// Function to match RFID tags
-boolean matchTag(char* inputTag, char* validTag) {
-  for (int i = 0; i < 12; i++) {
-    if (inputTag[i] != validTag[i]) {
-      return false;
-    }
+void readRFID() {
+  count = 0;
+  while (rfid_reader.available() && count < 12) {
+    input[count] = rfid_reader.read();
+    count++;
+    delay(5);
   }
-  return true;
+  if (count == 12) {
+    checkTagMatch();
+  }
 }
 
-// Function to activate specific parking slot
-void activateSlot(int slot) {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Matched Slot ");
-  lcd.print(slot);
-  Serial.print("Matched Slot ");
-  Serial.println(slot);
+void checkTagMatch() {
+  flag = flag1 = flag2 = 1;
+  for (int i = 0; i < 12; i++) {
+    if (input[i] != tag[i]) flag = 0;
+    if (input[i] != tag_1[i]) flag1 = 0;
+    if (input[i] != tag_2[i]) flag2 = 0;
+  }
+}
 
+void clearInput() {
+  for (int i = 0; i < 12; i++) {
+    input[i] = 'F';
+  }
+  count = 0;
+}
+
+void performParking(int slot) {
   switch (slot) {
     case 1:
-      runMotor(MOTOR1, 1000); // Run Motor 1 for Slot 1
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Matched1");
+      Serial.println("Matched1!");
+      BTSerial.println("270020F5E012");
+      moveToSlot(1);
       break;
     case 2:
-      runMotor(MOTOR2, 1200); // Run Motor 2 for Slot 2
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Matched2");
+      Serial.println("Matched2!");
+      BTSerial.println("270020F68E7F");
+      moveToSlot(2);
       break;
     case 3:
-      runMotor(MOTOR3, 1400); // Run Motor 3 for Slot 3
-      break;
-    case 4:
-      runMotor(MOTOR4, 1600); // Run Motor 4 for Slot 4
-      break;
-    case 5:
-      runMotor(MOTOR5, 1800); // Run Motor 5 for Slot 5
-      break;
-    case 6:
-      runMotor(MOTOR6, 2000); // Run Motor 6 for Slot 6
-      break;
-    default:
       lcd.clear();
-      lcd.print("Unknown Slot");
+      lcd.setCursor(0, 0);
+      lcd.print("Matched3");
+      Serial.println("Matched3!");
+      BTSerial.println("270020F4D023");
+      moveToSlot(3);
       break;
   }
 }
 
-// Function to run motor for a specific duration
+void moveToSlot(int slot) {
+  switch (slot) {
+    case 1:
+      runMotor(MOTOR_X, 3000); // X-axis movement
+      runMotor(MOTOR_Y, 2000); // Y-axis movement
+      runMotor(MOTOR_Z, 1000); // Z-axis movement
+      break;
+    case 2:
+      runMotor(MOTOR_X, 6000); // X-axis movement
+      runMotor(MOTOR_Y, 4000); // Y-axis movement
+      runMotor(MOTOR_Z, 2000); // Z-axis movement
+      break;
+    case 3:
+      runMotor(MOTOR_X, 9000); // X-axis movement
+      runMotor(MOTOR_Y, 6000); // Y-axis movement
+      runMotor(MOTOR_Z, 3000); // Z-axis movement
+      break;
+  }
+}
+
 void runMotor(int motorPin, int duration) {
   digitalWrite(motorPin, HIGH);
-  delay(duration);  // Run motor for the specified time
+  delay(duration);
   digitalWrite(motorPin, LOW);
 }
